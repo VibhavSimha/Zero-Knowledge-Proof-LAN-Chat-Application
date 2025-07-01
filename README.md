@@ -1,18 +1,41 @@
 # ZKP LAN Chat
 
-A secure, one-to-one private chat web application for LAN, using Zero Knowledge Proofs (ZKP) for user authentication. No user data is stored on the server.
+A secure, one-to-one private chat web application for LAN, using Zero Knowledge Proofs (ZKP) for user authentication. Users register with passwords and prove knowledge of their passwords without revealing them.
 
 ## Features
 - One-to-one private chat over LAN
-- User authentication using Zero Knowledge Proofs (ZKP)
-- No passwords or user data stored on the server
+- User registration with password-based authentication
+- Zero Knowledge Proof (ZKP) authentication using Schnorr protocol
+- No passwords ever sent to the server
 - Modern web UI (React)
 
 ## Tech Stack
-- Frontend: React
+- Frontend: React, crypto-js (for PBKDF2)
 - Backend: Node.js, Express, WebSocket
 - ZKP: elliptic (Schnorr protocol)
-- (Optional) Encryption: [Not yet implemented—messages are sent in plaintext after authentication]
+- Password Derivation: PBKDF2 with salt
+
+## How ZKP Authentication Works
+
+### Registration Process
+1. User enters username and password
+2. Client derives a private key from password using PBKDF2
+3. Client generates public key from private key
+4. Server stores only the public key and salt (never the password or private key)
+
+### Login Process
+1. User enters username
+2. Server provides the salt for that user
+3. Server sends a random challenge
+4. Client derives private key from password + salt
+5. Client generates Schnorr proof using the private key
+6. Server verifies the proof without learning the private key
+
+### Zero Knowledge Property
+- The server never sees the user's password or private key
+- The server only stores the public key and salt
+- Authentication is proven through cryptographic proof
+- Even if the server is compromised, passwords cannot be extracted
 
 ## Setup Instructions
 
@@ -52,27 +75,60 @@ npm start
 - **Important:** In `client/src/App.js`, set the API and WebSocket URLs to use your server's LAN IP (e.g., `http://192.168.1.42:4000`), not `localhost`, for other devices to connect.
 
 ## Usage Guide
-1. **Register:**
-   - Enter a username and generate a secret (kept locally).
-   - The app creates a ZKP public key/commitment.
-2. **Login:**
-   - Prove knowledge of your secret using ZKP (no password sent).
-   - If successful, you can start a private chat with another authenticated user.
-3. **Chat:**
-   - Messages are currently sent in plaintext after authentication. (Encryption can be added in the future.)
 
-## Security Explanation
-- **Zero Knowledge Proof:**
-  - Uses the Schnorr protocol (via elliptic) to prove knowledge of a secret without revealing it.
-  - No passwords or secrets are ever sent to the server.
-- **No User Data Stored:**
-  - The server is stateless regarding users; all authentication is ephemeral.
-- **Encryption:**
-  - [Not yet implemented] Messages are currently sent in plaintext after authentication. For true end-to-end encryption, a shared secret (e.g., ECDH) should be used to encrypt/decrypt messages.
+### 1. Registration
+- Click "Register New Account"
+- Enter a username and password (minimum 6 characters)
+- The app will create your account using ZKP
+- Your password is never sent to the server
+
+### 2. Login
+- Click "Login"
+- Enter your username
+- Enter your password when prompted
+- The app will prove knowledge of your password using ZKP
+
+### 3. Chat
+- Once authenticated, you can see other online users
+- Click on a user to start a private chat
+- Messages are sent after ZKP authentication
+
+## Security Features
+
+### Zero Knowledge Proof
+- **Schnorr Protocol:** Uses elliptic curve cryptography for efficient ZKP
+- **Password Derivation:** PBKDF2 with 100,000 iterations and unique salt
+- **No Password Transmission:** Passwords never leave the client
+- **Stateless Authentication:** Each login requires a fresh proof
+
+### Cryptographic Properties
+- **Completeness:** Honest users always succeed in authentication
+- **Soundness:** Dishonest users cannot authenticate without knowing the password
+- **Zero-Knowledge:** Server learns nothing about the password during authentication
+
+### Data Protection
+- **No Password Storage:** Server only stores public keys and salts
+- **Ephemeral Sessions:** Authentication sessions are temporary
+- **No Message Encryption:** Messages are currently sent in plaintext after authentication
 
 ## For Developers
-- See `/server` and `/client` for code.
-- ZKP logic is in the main app files using the elliptic library.
+
+### Key Components
+- **Server (`/server/index.js`):** Handles registration, login, ZKP verification, and WebSocket chat
+- **Client (`/client/src/App.js`):** React app with registration, login, and chat UI
+- **ZKP Implementation:** Uses elliptic library for Schnorr protocol
+
+### API Endpoints
+- `POST /api/register` - User registration with password
+- `POST /api/login` - Initiate ZKP authentication
+- `POST /api/challenge` - Get random challenge for ZKP
+- `POST /api/zkp-auth` - Submit ZKP proof for verification
+
+### Future Enhancements
+- End-to-end message encryption using ECDH
+- Persistent user storage (database)
+- Multi-factor authentication
+- Message history and offline support
 
 ## License
 MIT

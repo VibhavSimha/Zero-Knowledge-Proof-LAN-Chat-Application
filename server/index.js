@@ -16,24 +16,87 @@ const wss = new WebSocket.Server({ server });
 const EC = require('elliptic').ec;
 const ec = new EC('secp256k1');
 
-// In-memory session store (ephemeral, not persistent)
+// In-memory user store (in production, this would be a database)
+const users = {}; // username -> { publicKey, salt }
 const sessions = {};
 const authenticatedUsers = {}; // username -> sessionId mapping
 
-// --- Registration: receive public key for session ---
+// Helper function to derive private key from password
+function derivePrivateKey(password, salt) {
+  const key = crypto.pbkdf2Sync(password, salt, 100000, 32, 'sha256');
+  return ec.keyFromPrivate(key, 'hex');
+}
+
+// Helper function to generate salt
+function generateSalt() {
+  return crypto.randomBytes(16).toString('hex');
+}
+
+// --- User Registration: create account with password ---
 app.post('/api/register', (req, res) => {
-  const { username, publicKey } = req.body;
-  console.log(`[ZKP] Registration: username=${username}, publicKey=${publicKey}`);
-  if (!publicKey || !username) return res.status(400).json({ success: false, error: 'Missing publicKey or username' });
+  const { username, password } = req.body;
+  console.log(`[ZKP] Registration attempt: username=${username}`);
+  
+  if (!username || !password) {
+    return res.status(400).json({ success: false, error: 'Missing username or password' });
+  }
+  
+  if (users[username]) {
+    return res.status(400).json({ success: false, error: 'Username already exists' });
+  }
+  
+  if (password.length < 6) {
+    return res.status(400).json({ success: false, error: 'Password must be at least 6 characters' });
+  }
+  
+  try {
+    // Generate salt and derive private key from password
+    const salt = generateSalt();
+    const privateKey = derivePrivateKey(password, salt);
+    const publicKey = privateKey.getPublic('hex');
+    
+    // Store user (only public key and salt, never the private key)
+    users[username] = {
+      publicKey,
+      salt
+    };
+    
+    console.log(`[ZKP] User registered: username=${username}, publicKey=${publicKey}`);
+    res.json({ success: true, message: 'Registration successful' });
+  } catch (error) {
+    console.error('[ZKP] Registration error:', error);
+    res.status(500).json({ success: false, error: 'Registration failed' });
+  }
+});
+
+// --- User Login: initiate ZKP authentication ---
+app.post('/api/login', (req, res) => {
+  const { username } = req.body;
+  console.log(`[ZKP] Login attempt: username=${username}`);
+  
+  if (!username || !users[username]) {
+    return res.status(400).json({ success: false, error: 'User not found' });
+  }
+  
+  // Create session for ZKP authentication
   const sessionId = crypto.randomBytes(8).toString('hex');
-  sessions[sessionId] = { username, publicKey };
-  res.json({ success: true, sessionId });
+  sessions[sessionId] = { 
+    username, 
+    publicKey: users[username].publicKey,
+    salt: users[username].salt
+  };
+  
+  console.log(`[ZKP] Login session created: sessionId=${sessionId}`);
+  res.json({ success: true, sessionId, salt: users[username].salt });
 });
 
 // --- Challenge: server sends random challenge for ZKP ---
 app.post('/api/challenge', (req, res) => {
   const { sessionId } = req.body;
-  if (!sessions[sessionId]) return res.status(400).json({ success: false, error: 'Invalid session' });
+  if (!sessions[sessionId]) {
+    return res.status(400).json({ success: false, error: 'Invalid session' });
+  }
+  
   const challenge = crypto.randomBytes(32).toString('hex');
   sessions[sessionId].challenge = challenge;
   console.log(`[ZKP] Challenge issued: sessionId=${sessionId}, challenge=${challenge}`);
@@ -44,8 +107,12 @@ app.post('/api/challenge', (req, res) => {
 app.post('/api/zkp-auth', (req, res) => {
   const { sessionId, commitment, response } = req.body;
   console.log(`[ZKP] Proof received: sessionId=${sessionId}, commitment=${commitment}, response=${response}`);
+  
   const session = sessions[sessionId];
-  if (!session || !session.challenge) return res.status(400).json({ success: false, error: 'Invalid session or challenge' });
+  if (!session || !session.challenge) {
+    return res.status(400).json({ success: false, error: 'Invalid session or challenge' });
+  }
+  
   try {
     // Parse public key
     const pubKey = ec.keyFromPublic(session.publicKey, 'hex').getPublic();
@@ -55,19 +122,24 @@ app.post('/api/zkp-auth', (req, res) => {
     const e = ec.keyFromPrivate(session.challenge, 'hex').getPrivate();
     // Response as big number
     const s = ec.keyFromPrivate(response, 'hex').getPrivate();
-    // s*G = R + e*P
+    
+    // Verify Schnorr proof: s*G = R + e*P
     const sG = ec.g.mul(s);
     const eP = pubKey.mul(e);
     const R_plus_eP = R.add(eP);
     const valid = sG.eq(R_plus_eP);
+    
     if (valid) {
       session.authenticated = true;
       authenticatedUsers[session.username] = sessionId;
+      console.log(`[ZKP] Authentication successful: username=${session.username}`);
       res.json({ success: true });
     } else {
+      console.log(`[ZKP] Authentication failed: invalid proof`);
       res.status(401).json({ success: false, error: 'Invalid ZKP proof' });
     }
-  } catch (e) {
+  } catch (error) {
+    console.error('[ZKP] Proof verification error:', error);
     res.status(400).json({ success: false, error: 'Malformed proof' });
   }
 });

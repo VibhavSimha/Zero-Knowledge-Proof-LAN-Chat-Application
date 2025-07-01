@@ -1,14 +1,17 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { ec as EC } from 'elliptic';
+import crypto from 'crypto-js';
 
 const ec = new EC('secp256k1');
 const WS_URL = 'ws://192.168.0.110:4000';
 const API_URL = 'http://192.168.0.110:4000';
 
 function App() {
-  const [step, setStep] = useState('register');
+  const [step, setStep] = useState('auth'); // 'auth', 'register', 'login', 'challenge', 'prove', 'chat'
   const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
   const [sessionId, setSessionId] = useState('');
+  const [salt, setSalt] = useState('');
   const [keyPair, setKeyPair] = useState(null);
   const [challenge, setChallenge] = useState('');
   const [commitment, setCommitment] = useState('');
@@ -20,23 +23,74 @@ function App() {
   const [message, setMessage] = useState('');
   const wsRef = useRef(null);
 
-  // Registration: generate keypair and send public key
-  const handleRegister = async () => {
-    const kp = ec.genKeyPair();
-    setKeyPair(kp);
-    const pubHex = kp.getPublic('hex');
-    console.log(`[ZKP] Registering with username=${username}, publicKey=${pubHex}`);
-    const res = await fetch(`${API_URL}/api/register`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, publicKey: pubHex })
+  // Helper function to derive private key from password and salt
+  const derivePrivateKey = (password, salt) => {
+    const key = crypto.PBKDF2(password, salt, {
+      keySize: 256/32,
+      iterations: 100000
     });
-    const data = await res.json();
-    if (data.success) {
-      setSessionId(data.sessionId);
-      setStep('challenge');
-    } else {
+    return ec.keyFromPrivate(key.toString(), 'hex');
+  };
+
+  // Registration: create account with password
+  const handleRegister = async () => {
+    if (!username.trim() || !password.trim()) {
+      alert('Please enter both username and password');
+      return;
+    }
+    
+    if (password.length < 6) {
+      alert('Password must be at least 6 characters');
+      return;
+    }
+
+    try {
+      console.log(`[ZKP] Registering user: ${username}`);
+      const res = await fetch(`${API_URL}/api/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password })
+      });
+      const data = await res.json();
+      if (data.success) {
+        alert('Registration successful! You can now login.');
+        setStep('auth');
+        setUsername('');
+        setPassword('');
+      } else {
+        alert(`Registration failed: ${data.error}`);
+      }
+    } catch (error) {
+      console.error('Registration error:', error);
       alert('Registration failed');
+    }
+  };
+
+  // Login: initiate ZKP authentication
+  const handleLogin = async () => {
+    if (!username.trim()) {
+      alert('Please enter username');
+      return;
+    }
+
+    try {
+      console.log(`[ZKP] Logging in user: ${username}`);
+      const res = await fetch(`${API_URL}/api/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setSessionId(data.sessionId);
+        setSalt(data.salt);
+        setStep('challenge');
+      } else {
+        alert(`Login failed: ${data.error}`);
+      }
+    } catch (error) {
+      console.error('Login error:', error);
+      alert('Login failed');
     }
   };
 
@@ -59,24 +113,39 @@ function App() {
 
   // Generate commitment and response, send proof
   const handleProve = async () => {
-    const k = ec.genKeyPair().getPrivate();
-    const R = ec.g.mul(k);
-    setCommitment(R.encode('hex'));
-    const e = ec.keyFromPrivate(challenge, 'hex').getPrivate();
-    const s = k.add(e.mul(keyPair.getPrivate())).umod(ec.curve.n);
-    setResponse(s.toString('hex'));
-    console.log(`[ZKP] Sending proof: commitment=${R.encode('hex')}, response=${s.toString('hex')}`);
-    const res = await fetch(`${API_URL}/api/zkp-auth`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sessionId, commitment: R.encode('hex'), response: s.toString('hex') })
-    });
-    const data = await res.json();
-    if (data.success) {
-      setStep('chat');
-      connectWebSocket();
-    } else {
-      alert('ZKP authentication failed');
+    if (!password.trim()) {
+      alert('Please enter your password');
+      return;
+    }
+
+    try {
+      // Derive private key from password and salt
+      const privateKey = derivePrivateKey(password, salt);
+      setKeyPair(privateKey);
+
+      const k = ec.genKeyPair().getPrivate();
+      const R = ec.g.mul(k);
+      setCommitment(R.encode('hex'));
+      const e = ec.keyFromPrivate(challenge, 'hex').getPrivate();
+      const s = k.add(e.mul(privateKey.getPrivate())).umod(ec.curve.n);
+      setResponse(s.toString('hex'));
+      
+      console.log(`[ZKP] Sending proof: commitment=${R.encode('hex')}, response=${s.toString('hex')}`);
+      const res = await fetch(`${API_URL}/api/zkp-auth`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId, commitment: R.encode('hex'), response: s.toString('hex') })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setStep('chat');
+        connectWebSocket();
+      } else {
+        alert('ZKP authentication failed');
+      }
+    } catch (error) {
+      console.error('Proof generation error:', error);
+      alert('Authentication failed');
     }
   };
 
@@ -144,24 +213,101 @@ function App() {
 
   return (
     <div style={styles.container}>
+      {step === 'auth' && (
+        <div style={styles.authContainer}>
+          <h2 style={styles.title}>ZKP LAN Chat</h2>
+          <div style={styles.authBox}>
+            <h3>Welcome to Zero Knowledge Proof Chat</h3>
+            <p style={styles.description}>
+              Register a new account or login to start chatting securely.
+            </p>
+            <div style={styles.authButtons}>
+              <button 
+                style={styles.button}
+                onClick={() => setStep('register')}
+              >
+                Register New Account
+              </button>
+              <button 
+                style={styles.button}
+                onClick={() => setStep('login')}
+              >
+                Login
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {step === 'register' && (
         <div style={styles.authContainer}>
           <h2 style={styles.title}>ZKP LAN Chat</h2>
           <div style={styles.authBox}>
-            <h3>Register with Zero Knowledge Proof</h3>
+            <h3>Register New Account</h3>
+            <p style={styles.description}>
+              Create a new account with a password. Your password will never be sent to the server.
+            </p>
             <input 
               style={styles.input}
               placeholder="Enter username" 
               value={username} 
               onChange={e => setUsername(e.target.value)} 
             />
-            <button 
-              style={styles.button}
-              onClick={handleRegister} 
-              disabled={!username.trim()}
-            >
-              Register
-            </button>
+            <input 
+              style={styles.input}
+              type="password"
+              placeholder="Enter password (min 6 characters)" 
+              value={password} 
+              onChange={e => setPassword(e.target.value)} 
+            />
+            <div style={styles.buttonGroup}>
+              <button 
+                style={styles.button}
+                onClick={handleRegister} 
+                disabled={!username.trim() || password.length < 6}
+              >
+                Register
+              </button>
+              <button 
+                style={styles.secondaryButton}
+                onClick={() => setStep('auth')}
+              >
+                Back
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {step === 'login' && (
+        <div style={styles.authContainer}>
+          <h2 style={styles.title}>ZKP LAN Chat</h2>
+          <div style={styles.authBox}>
+            <h3>Login</h3>
+            <p style={styles.description}>
+              Enter your username to start the ZKP authentication process.
+            </p>
+            <input 
+              style={styles.input}
+              placeholder="Enter username" 
+              value={username} 
+              onChange={e => setUsername(e.target.value)} 
+            />
+            <div style={styles.buttonGroup}>
+              <button 
+                style={styles.button}
+                onClick={handleLogin} 
+                disabled={!username.trim()}
+              >
+                Login
+              </button>
+              <button 
+                style={styles.secondaryButton}
+                onClick={() => setStep('auth')}
+              >
+                Back
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -185,7 +331,21 @@ function App() {
           <div style={styles.authBox}>
             <h3>Prove Knowledge</h3>
             <p>Challenge: <code>{challenge}</code></p>
-            <button style={styles.button} onClick={handleProve}>
+            <p style={styles.description}>
+              Enter your password to prove knowledge without revealing it.
+            </p>
+            <input 
+              style={styles.input}
+              type="password"
+              placeholder="Enter your password" 
+              value={password} 
+              onChange={e => setPassword(e.target.value)} 
+            />
+            <button 
+              style={styles.button} 
+              onClick={handleProve}
+              disabled={!password.trim()}
+            >
               Send Proof
             </button>
           </div>
@@ -302,6 +462,11 @@ const styles = {
     textAlign: 'center',
     minWidth: '300px'
   },
+  description: {
+    color: '#666',
+    marginBottom: '20px',
+    fontSize: '14px'
+  },
   input: {
     width: '100%',
     padding: '12px',
@@ -318,7 +483,28 @@ const styles = {
     borderRadius: '4px',
     fontSize: '16px',
     cursor: 'pointer',
+    marginTop: '10px',
+    marginRight: '10px'
+  },
+  secondaryButton: {
+    backgroundColor: '#6c757d',
+    color: 'white',
+    padding: '12px 24px',
+    border: 'none',
+    borderRadius: '4px',
+    fontSize: '16px',
+    cursor: 'pointer',
     marginTop: '10px'
+  },
+  authButtons: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '10px'
+  },
+  buttonGroup: {
+    display: 'flex',
+    gap: '10px',
+    justifyContent: 'center'
   },
   chatContainer: {
     display: 'flex',
