@@ -1,0 +1,33 @@
+{
+  "name": "zkp-lan-chat-client",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Frontend for ZKP-based LAN chat app.",
+  "dependencies": {
+    "cors": "^2.8.5",
+    "elliptic": "^6.5.4",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-scripts": "^5.0.1",
+    "snarkjs": "^0.7.1"
+  },
+  "scripts": {
+    "start": "react-scripts start",
+    "build": "react-scripts build",
+    "test": "react-scripts test",
+    "eject": "react-scripts eject"
+  },
+  "license": "MIT",
+  "browserslist": {
+    "production": [
+      ">0.2%",
+      "not dead",
+      "not op_mini all"
+    ],
+    "development": [
+      "last 1 chrome version",
+      "last 1 firefox version",
+      "last 1 safari version"
+    ]
+  }
+}
