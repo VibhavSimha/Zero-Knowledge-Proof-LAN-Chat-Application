@@ -3,8 +3,8 @@ import { ec as EC } from 'elliptic';
 import crypto from 'crypto-js';
 
 const ec = new EC('secp256k1');
-const WS_URL = 'ws://192.168.0.110:4000';
-const API_URL = 'http://192.168.0.110:4000';
+const WS_URL = 'ws://192.168.0.113:4000';
+const API_URL = 'http://192.168.0.113:4000';
 
 function App() {
   const [step, setStep] = useState('auth'); // 'auth', 'register', 'login', 'challenge', 'prove', 'chat'
@@ -46,10 +46,21 @@ function App() {
 
     try {
       console.log(`[ZKP] Registering user: ${username}`);
+      // Generate salt on client
+      const salt = crypto.lib.WordArray.random(16).toString();
+      // Derive private key from password and salt
+      const key = crypto.PBKDF2(password, salt, {
+        keySize: 256/32,
+        iterations: 100000
+      });
+      const privateKey = ec.keyFromPrivate(key.toString(), 'hex');
+      // Compute public key
+      const publicKey = privateKey.getPublic('hex');
+      // Send only username, publicKey, and salt to server
       const res = await fetch(`${API_URL}/api/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password })
+        body: JSON.stringify({ username, publicKey, salt })
       });
       const data = await res.json();
       if (data.success) {

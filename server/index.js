@@ -34,28 +34,19 @@ function generateSalt() {
 
 // --- User Registration: create account with password ---
 app.post('/api/register', (req, res) => {
-  const { username, password } = req.body;
+  const { username, publicKey, salt } = req.body;
   console.log(`[ZKP] Registration attempt: username=${username}`);
   
-  if (!username || !password) {
-    return res.status(400).json({ success: false, error: 'Missing username or password' });
+  if (!username || !publicKey || !salt) {
+    return res.status(400).json({ success: false, error: 'Missing username, publicKey, or salt' });
   }
   
   if (users[username]) {
     return res.status(400).json({ success: false, error: 'Username already exists' });
   }
   
-  if (password.length < 6) {
-    return res.status(400).json({ success: false, error: 'Password must be at least 6 characters' });
-  }
-  
   try {
-    // Generate salt and derive private key from password
-    const salt = generateSalt();
-    const privateKey = derivePrivateKey(password, salt);
-    const publicKey = privateKey.getPublic('hex');
-    
-    // Store user (only public key and salt, never the private key)
+    // Store user (only public key and salt, never the private key or password)
     users[username] = {
       publicKey,
       salt
