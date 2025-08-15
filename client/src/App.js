@@ -3,8 +3,8 @@ import { ec as EC } from 'elliptic';
 import crypto from 'crypto-js';
 
 const ec = new EC('secp256k1');
-const WS_URL = 'ws://192.168.0.113:4000';
-const API_URL = 'http://192.168.0.113:4000';
+const WS_URL = 'ws://<Replace with local LAN WIFI IPv4 Address>:4000';
+const API_URL = 'http://<Replace with local LAN WIFI IPv4 Address>:4000';
 
 function App() {
   const [step, setStep] = useState('auth'); // 'auth', 'register', 'login', 'challenge', 'prove', 'chat'
